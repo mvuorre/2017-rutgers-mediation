@@ -1,0 +1,356 @@
+---
+title: Multilevel Mediation
+subtitle: Within-subject mediation analysis for experimental data in cognitive psychology and neuroscience
+author: Matti Vuorre
+institute:
+    - Columbia University
+    - mv2521@columbia.edu, \href{https://www.twitter.com/@vuorre}{\\@vuorre}
+date: November 2, 2017
+bibliography: includes/references.bib
+output: 
+  beamer_presentation:
+    keep_tex: false
+    theme: "Madrid"
+    colortheme: "dolphin"
+    df_print: kable
+    includes:
+      in_header: includes/mystyle.tex
+header-includes:
+- \usefonttheme[onlymath]{serif}
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(tidyverse)
+opts_chunk$set(echo = F, collapse = T, message = F, warning = F,
+               dev = 'pdf', fig.width = 4.8, fig.height = 2.5,
+               fig.align = 'center')
+theme_set(papaja::theme_apa(base_size = 8))
+options(digits = 3)
+library(bmlm)
+library(gridExtra)
+```
+
+# Mediation
+
+## What is mediation?
+
+- Mediation is a hypothesized causal model, whereby effect of an IV to a DV is transmitted through an intermediary variable M
+
+```{r, fig.height = 2.2, fig.width = 4}
+mlm_path_plot(xlab = "Stimulus\n(X)",
+              mlab = "Organism\n(M)",
+              ylab = "Response\n(Y)")
+```
+
+## Assessing mediation
+
+### Experimental approach
+
+- Experiment 1: manipulate X and measure M
+- Experiment 2: manipulate M and measure Y
+- \textit{Establishing a causal chain: Why experiments are often more effective than mediational analyses in examining psychological processes} [@spencer_establishing_2005]\pause
+
+### Statistical modeling approach
+
+- Experiment: manipulate X, measure M and Y
+- Regress M on X; Y on X and M
+- Assume that
+    - Y does not affect M
+    - No 3rd variable on M to Y relationship
+    - M is measured without error
+    - Y and M residuals are not correlated
+
+## Between- vs. within-subject causal models
+
+- Mediation models often address between-subject processes
+    - Individuals measured once, causal process between individuals\pause\par
+
+- We are interested in within-person causal processes
+    - Individuals measured repeatedly, causal process *within individuals*\pause\par
+    
+- Confusing these levels of analysis risks Simpson's paradox
+    - Recent call for focusing on "mediating role of neurophysiology" [@harty_mind_2017] ignored the distinction\pause\par
+
+- Multilevel model for trial-level data
+    - Average person's within-person causal process ("fixed" effects)
+    - Causal effects' heterogeneity ("random" effects)
+    - Hierarchical Bayes estimates for individuals in current sample
+
+# Multilevel Mediation
+
+## Multilevel mediation
+
+\vspace{-.3cm}\begin{center}
+\includegraphics[width=7cm]{includes/figure-2.pdf}
+\end{center}\vspace{-.4cm}
+
+- Subject-specific parameters (e.g. $a_1$)
+- Parameters' prior distribution is estimated from data
+- $\sigma_{a_jb_j}$ can indicate an omitted moderator [@tofighi_multilevel_2013]
+
+## Multilevel mediation: Practical implementation
+
+We developed software for Bayesian estimation of multilevel mediation models [@vuorre_within-subject_2017; @vuorre_bmlm:_2017]
+
+### bmlm: Bayesian Multi-Level Mediation
+
+- R package
+- Bayesian inference
+- Data preprocessing, model estimation, summarizing, and visualization
+- Continuous and binary Y
+- \url{https://mvuorre.github.io/bmlm/}
+
+```{r, eval = F, echo = T}
+install.packages("bmlm")
+```
+
+## Bayesian data analysis and inference
+
+\includegraphics[width=\textwidth]{includes/homo_bayesianis.png}
+
+# Example Multilevel Mediation Analysis
+
+## Tip-of-the-tongue, ERPs, learning (Bloom et al., in prep)
+
+- Tip-of-the-tongue state (ToT) predicts increased curiosity and answer seeking [@metcalfe_tip_tongue_2017-1], and possibly learning\pause
+- Experiment (Bloom et al., in prep):
+    - 30 participants presented with general info questions
+    - "What's the capital of Australia?"
+    - After 3 seconds, asked if they are in a ToT state
+    - After 1 second, correct feedback presented
+    - ERPs timelocked to feedback
+    - After 150 items, a surprise recall test on all items\pause
+- We examined to what extent
+    - ToT state during learning predicts correct recall
+    - Late positive (centro-parietal) ERP amplitude mediates ToT -> recall effect
+
+## Hypothesized causal model
+
+```{r, fig.height = 2.5, fig.width = 4.4}
+mlm_path_plot(xlab = "ToT", ylab = "Recall", mlab = "ERP\nAmplitude")
+```
+
+## ToT Data
+
+```{r}
+tot <- read_csv("includes/iso.csv") %>% 
+    mutate(id = as.integer(as.factor(id))) %>% 
+    select(id, trial=epoch, tot, amplitude, recall) %>% 
+    arrange(id, trial)
+grid.arrange(
+    tot %>% 
+        ggplot(aes(tot, amplitude)) +
+        geom_smooth(aes(group=id), method="lm", se = F, size=.3, col="black") +
+        stat_summary(aes(group=id), fun.y=mean, geom="point", col="black", size=.8) +
+        labs(x="ToT", y="Mean amplitude") +
+        scale_x_continuous(limits = c(-.5, 1.5), breaks = 0:1),
+    tot %>% 
+        ggplot(aes(amplitude, recall)) +
+        labs(x="Amplitude", y="Recall probability") +
+        scale_y_continuous(breaks = scales::pretty_breaks()) +
+        geom_smooth(aes(group=id), method="glm", se = F, 
+                    method.args = list(family=binomial), size=.4, col="black"),
+    nrow = 1, widths = c(4,7))
+```
+
+## ToT Data
+
+```{r}
+head(tot, 3)
+```
+
+\pause
+Remove between-subject variability from mediator:
+
+```{r, echo = -2}
+tot <- isolate(tot, by = "id", value = "amplitude")
+head(tot, 3)
+```
+
+## Model estimation
+
+```{r, echo = F}
+load("includes/saved-model.rda")
+# save(fit, file="presentations/2017-rutgers/saved-model.rda", compress=T)
+```
+
+```{r, eval = F, echo = T}
+fit <- mlm(tot, id = "id", x = "tot", 
+           m = "amplitude_cw", y = "recall",
+           binary_y = TRUE, cores = 4)
+```
+
+This function returns the model's posterior distribution. Users specify data and variables within. Additional options include prior distributions, binary outcomes and multiple CPUs.\pause
+
+**bmlm** estimates the posterior distribution using MCMC sampling (HMC; @stan_development_team_stan:_2016).
+
+## Model summary: Path diagram
+
+```{r, echo = T, eval = F}
+?mlm_path_plot
+```
+
+```{r}
+mlm_path_plot(fit, xlab = "ToT", 
+              mlab = "Amplitude", ylab = "Recall")
+```
+
+## Model summary: Numerical
+
+```{r, echo = T, eval = F}
+?mlm_summary
+```
+
+```{r}
+mlm_summary(fit)
+```
+
+## Model summary: Graphical
+
+```{r, eval = F, echo = T}
+?mlm_pars_plot
+```
+
+```{r}
+mlm_pars_plot(fit, "coef", p_size = 2) + coord_flip()
+```
+
+## Fitted values
+
+```{r, eval = F, echo = T}
+?mlm_spaghetti_plot
+```
+
+```{r, fig.height = 2.7, fig.width = 4.2}
+spaghetti1 <- mlm_spaghetti_plot(mod = fit, 
+                                 d = tot, 
+                                 id = "id", 
+                                 x = "tot", 
+                                 m = "amplitude_cw", 
+                                 y = "recall", 
+                                 mx = "data",
+                                 n = 2, 
+                                 n_samples = 1000,
+                                 h_jitter = .05,
+                                 bar_width = .4,
+                                 binary_y = TRUE)[[1]] +
+    scale_x_continuous(limits = c(-.5, 1.5), breaks = 0:1)
+spaghetti2 <- mlm_spaghetti_plot(fit, 
+                                 tot, 
+                                 "id", 
+                                 "tot", 
+                                 "amplitude_cw", 
+                                 "recall", 
+                                 mx = "fitted",
+                                 n_samples = 1000,
+                                 n = 20,
+                                 binary_y = TRUE)[[2]]
+grid.arrange(
+    spaghetti1 + 
+        labs(x = "ToT", 
+             y = "Amplitude",
+             title = "Path a"),
+    spaghetti2 + 
+        scale_y_continuous(limits = 0:1) +
+        labs(x = "Amplitude", 
+             y = "Recall probability",
+             title = "Path b"),
+    nrow = 1, widths = c(4, 7)
+)
+```
+
+## Between-subject (co)variance
+
+```{r}
+mlm_summary(fit, pars = c("tau_a", "tau_b", "corrab"))
+```
+
+```{r, fig.height=2, fig.width=2.6}
+data.frame(aj = rstan::get_posterior_mean(fit, pars = "u_a")[,5],
+           bj = rstan::get_posterior_mean(fit, pars = "u_b")[,5]) %>% 
+    ggplot(aes(aj, bj)) +
+    geom_point(shape = 1) +
+    labs(x=bquote(a[j]), y=bquote(b[j]))
+```
+
+## Conclusion
+
+- Late positivity mediated (~10% of) ToT's positive effect on recall
+    - Late positivity may index enhanced processing of feedback\pause
+- Evidence of heterogeneity in causal paths
+    - Estimate of $a_j-b_j$ correlation negative but very uncertain\pause
+- Formal assessment of within-subject mediation with **bmlm**
+    - Relatively easy, free, accessible
+    - Probabilistic modeling
+        - Intuitive probability statements about parameters
+        - Flexible framework for investigating questions about within-person psychological and causal processes
+
+## Acknowledgements
+
+Thank you
+
+- Niall Bolger
+- Janet Metcalfe
+- David Friedman
+- Paul A. Bloom
+- Judy Xu
+
+# Appendix: Mediation equations
+
+## Appendix: Mediation equations
+
+### Between-subject mediation
+
+\begin{align*}
+Y_i &\sim N(d_Y + c'X_i + bM_i, \sigma^{2}_Y) &\mbox{[Y model]} \\
+M_i &\sim N(d_M + aX_i, \sigma^{2}_M) &\mbox{[M model]}
+\end{align*}
+
+\begin{align*}
+me &= a \times b &\mbox{[mediated effect]} \\
+c &= c' + me &\mbox{[total effect]}
+\end{align*}
+
+## Appendix: Mediation equations
+
+### bmlm's within-subject mediation model, continuous outcome
+
+\begin{align*}
+Y_{ij} &\sim N(d_{Yj} + {c'_j}X_{ij} + b_{j}M_{ij}, \sigma^{2}_Y) &\mbox{[Y model]} \\
+M_{ij} &\sim N(d_{Mj} + {a_j}X_{ij}, \sigma^{2}_M) &\mbox{[M model]}
+\end{align*}
+
+$$
+\begin{pmatrix}
+d_{Mj} \\ d_{Yj} \\ a_j \\ b_j \\ c'_j
+\end{pmatrix} \sim  N
+\begin{bmatrix}
+\begin{pmatrix}
+d_M \\ d_Y \\ a \\ b \\ c'
+\end{pmatrix},
+\begin{pmatrix}
+\sigma^2_{d_{Mj}} &  &  &  &  \\
+\sigma_{d_{Mj}d_{Yj}} & \sigma^2_{d_{Y_j}} &  &  & \\
+\sigma_{d_{Mj}a_j} & \sigma_{d_{Yj}a_j} & \sigma^2_{a_j} & &  \\
+\sigma_{d_{Mj}b_j} & \sigma_{d_{Yj}b_j} & \sigma_{{a_j}{b_j}} & \sigma^2_{b_j} &  \\
+\sigma_{d_{Mj}c'_j} & \sigma_{d_{Yj}c'_j} & \sigma_{{a_j}{c'_j}} & \sigma_{{b_j}{c'_j}} & \sigma^2_{c'_j}
+\end{pmatrix}
+\end{bmatrix}
+$$
+
+\begin{align*}
+me &= a \times b + \sigma_{a_{j}b_{j}} &\mbox{[mediated effect]} \\
+c &= c' + me &\mbox{[total effect]}
+\end{align*}
+
+## Appendix: Mediation equations
+
+### bmlm's within-subject mediation model, binary outcome
+
+\begin{align*}
+Y_{ij} &\sim Bernoulli(\mbox{logit}(d_{yj} + {c'_j}X_{ij} + b_{j}M_{ij})) &\mbox{[Y model]} \\
+M_{ij} &\sim N(d_{mj} + {a_j}X_{ij}, \sigma^{2}_M) &\mbox{[M model]}
+\end{align*}
+
+## References {.allowframebreaks}
